@@ -123,4 +123,10 @@ test("claude and codex follow the fixed order from the switches, ahead of price"
   assert.equal(gr({ include_restricted: true, codex_group_auto: true })[0], "codex-sale")
   // the fixed order never overrides the restricted-pool switch
   assert.deepEqual(gr({}), ["azure-officially"])
+  // The unified switch wins over stale legacy settings for both families.
+  assert.deepEqual(run({ fixed_group_order: true, claude_sale_first: false, claude_group_order: false }), ["cc-sale", "cc-expensive", "cheap"])
+  assert.equal(run({ fixed_group_order: false })[0], "cheap")
+  assert.equal(gr({ fixed_group_order: true, codex_group_auto: true, include_restricted: true })[0], "codex")
+  assert.equal(gr({ fixed_group_order: false, include_restricted: true })[0], "codex-sale")
+  assert.deepEqual(gr({ fixed_group_order: true }), ["azure-officially"])
 })

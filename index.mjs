@@ -118,28 +118,10 @@ export async function PackycodeAuthPlugin(input) {
           default: false,
         },
         {
-          key: "claude_group_order",
-          label: "Claude 使用固定主备分组",
-          description: "开启：按下面的开关选择 cc-sale / cc-expensive 主备顺序；两者不可用时其余分组继续兜底。固定顺序优先于历史成功率和速度优先，实际失败后的冷却仍有效。关闭：恢复插件的价格/健康度自动选路。仅影响 Claude；需要对应分组的单分组令牌。",
+          key: "fixed_group_order",
+          label: "固定主备（关闭则自动选路）",
+          description: "开启：Claude 按 cc-sale → cc-expensive；Codex 按 codex → codex-sale → azure-officially，失败时继续兜底。关闭：按健康度、价格和速度设置自动选路。实际失败冷却和受限分组开关始终有效。在界面保存后，下一次请求生效，无需重启。",
           default: true,
-        },
-        {
-          key: "claude_sale_first",
-          label: "Claude 首选 cc-sale（关闭则首选 cc-expensive）",
-          description: "固定主备分组开启时：开 = cc-sale → cc-expensive；关 = cc-expensive → cc-sale。其他模型保持自动选路，修改后下一次请求生效。",
-          default: true,
-        },
-        {
-          key: "codex_group_order",
-          label: "Codex 使用固定主备分组",
-          description: "开启且关闭自动挑分组时：codex → codex-sale → azure-officially；关闭则恢复插件按价格/健康度自动选路。注意 codex / codex-sale 属于受限分组（站方称第三方接入会封号），需要同时开启「允许使用受限分组」；azure-officially 不受限但倍率更高。",
-          default: true,
-        },
-        {
-          key: "codex_group_auto",
-          label: "Codex 按可用性自动挑分组",
-          description: "开启时忽略固定顺序，按插件的健康度、价格和速度设置自动选路；受限分组仍受「允许使用受限分组」约束。关闭且启用固定主备时：codex → codex-sale → azure-officially。修改后重启 Magpie 生效。",
-          default: false,
         },
         {
           key: "prefer_speed",

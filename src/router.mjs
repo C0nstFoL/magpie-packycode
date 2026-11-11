@@ -15,15 +15,20 @@
 
 import { multiplierOf, priceOf } from "./pricing.mjs"
 
-// Magpie exposes provider options as boolean switches. Resolve them on
-// every request; the host may require a restart to refresh its options.
+// One switch selects fixed fallback order or ordinary automatic routing.
+// A saved new switch overrides legacy options; old installations keep their
+// previous routing until the new switch is first saved.
 export function preferredGroup(opts = {}, model = "") {
   if (!/^(claude|codex|gpt-6)/i.test(model)) return { group: "", then: [] }
-  if (/^(codex|gpt-6)/i.test(model)) {
-    if (opts.codex_group_order === false) return { group: "", then: [] }
-    // codex is restricted either way: a specific pool must be named, and
-    // "auto" leaves the plugin's own cost order to choose it.
-    if (opts.codex_group_auto) return { group: "", then: [] }
+  const codex = /^(codex|gpt-6)/i.test(model)
+  if (typeof opts.fixed_group_order === "boolean") {
+    if (!opts.fixed_group_order) return { group: "", then: [] }
+    return codex
+      ? { group: "codex", then: ["codex-sale", "azure-officially"] }
+      : { group: "cc-sale", then: ["cc-expensive"] }
+  }
+  if (codex) {
+    if (opts.codex_group_order === false || opts.codex_group_auto) return { group: "", then: [] }
     return { group: "codex", then: ["codex-sale", "azure-officially"] }
   }
   if (opts.claude_group_order === false) return { group: "", then: [] }
