@@ -78,7 +78,7 @@ test("a delisted pool still competes at the price it had", () => {
   p.knownGroups = { "cc-sale": 0.8 }
   p.models.get("claude-x").groups = ["cheap", "mid", "cc-sale"]
   const keys = [key("sk-cheap", ["cheap"]), key("sk-sale", ["cc-sale"]), key("sk-mid", ["mid"])]
-  const c = orderFor({ model: "claude-x", keys, pricing: p, perf: null, down: down() })
+  const c = orderFor({ model: "claude-x", keys, pricing: p, perf: null, down: down(), opts: { claude_group_order: false } })
   assert.deepEqual(
     c.map((x) => x.group),
     ["cheap", "cc-sale", "mid"],
@@ -90,7 +90,7 @@ test("prefer_speed puts the healthier group first", () => {
     ["cheap", { success: 95, ttft: 5000 }],
     ["mid", { success: 99.9, ttft: 400 }],
   ])
-  const c = orderFor({ model: "claude-x", keys, pricing, perf, down: down(), opts: { prefer_speed: true } })
+  const c = orderFor({ model: "claude-x", keys, pricing, perf, down: down(), opts: { prefer_speed: true, claude_group_order: false } })
   assert.equal(c[0].group, "mid")
 })
 
@@ -99,4 +99,28 @@ test("a model no group of ours serves says so", () => {
   const c = orderFor({ model: "gpt-x", keys: none, pricing, perf: null, down: down() })
   assert.equal(c.length, 0)
   assert.match(explain("gpt-x", c, pricing, none), /no PackyAPI key serves/)
+})
+
+test("claude and codex follow the fixed order from the switches, ahead of price", () => {
+  const model = "claude-x"
+  const groups = ["cc-sale", "cc-expensive", "cheap"]
+  const pr = { models: new Map([[model, { id: model, groups }]]), groupRatio: new Map([["cc-sale", 0.8], ["cc-expensive", 2.8], ["cheap", 0.3]]) }
+  const ks = groups.map((g) => key("sk-" + g, [g]))
+  const run = (opts, d = down()) => orderFor({ model, keys: ks, pricing: pr, perf: null, down: d, opts: { include_restricted: true, ...opts } }).map((x) => x.group)
+  assert.deepEqual(run({}), ["cc-sale", "cc-expensive", "cheap"])
+  assert.deepEqual(run({ claude_sale_first: false }), ["cc-expensive", "cc-sale", "cheap"])
+  assert.equal(run({ claude_group_order: false })[0], "cheap")
+  const d = down()
+  d.whole.set("sk-cc-sale", Date.now() + 60_000)
+  assert.equal(run({}, d)[0], "cc-expensive")
+
+  const gm = "gpt-6.1-sol"
+  const gg = ["codex-sale", "codex", "azure-officially"]
+  const gp = { models: new Map([[gm, { id: gm, groups: gg }]]), groupRatio: new Map([["codex-sale", 0.3], ["codex", 0.5], ["azure-officially", 5]]) }
+  const gk = gg.map((g) => key("sk-" + g, [g]))
+  const gr = (opts) => orderFor({ model: gm, keys: gk, pricing: gp, perf: null, down: down(), opts }).filter((x) => !x.skip).map((x) => x.group)
+  assert.deepEqual(gr({ include_restricted: true }), ["codex", "codex-sale", "azure-officially"])
+  assert.equal(gr({ include_restricted: true, codex_group_auto: true })[0], "codex-sale")
+  // the fixed order never overrides the restricted-pool switch
+  assert.deepEqual(gr({}), ["azure-officially"])
 })

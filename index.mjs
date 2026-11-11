@@ -118,6 +118,30 @@ export async function PackycodeAuthPlugin(input) {
           default: false,
         },
         {
+          key: "claude_group_order",
+          label: "Claude 使用固定主备分组",
+          description: "开启：按下面的开关选择 cc-sale / cc-expensive 主备顺序；两者不可用时其余分组继续兜底。固定顺序优先于历史成功率和速度优先，实际失败后的冷却仍有效。关闭：恢复插件的价格/健康度自动选路。仅影响 Claude；需要对应分组的单分组令牌。",
+          default: true,
+        },
+        {
+          key: "claude_sale_first",
+          label: "Claude 首选 cc-sale（关闭则首选 cc-expensive）",
+          description: "固定主备分组开启时：开 = cc-sale → cc-expensive；关 = cc-expensive → cc-sale。其他模型保持自动选路，修改后下一次请求生效。",
+          default: true,
+        },
+        {
+          key: "codex_group_order",
+          label: "Codex 使用固定主备分组",
+          description: "开启且关闭自动挑分组时：codex → codex-sale → azure-officially；关闭则恢复插件按价格/健康度自动选路。注意 codex / codex-sale 属于受限分组（站方称第三方接入会封号），需要同时开启「允许使用受限分组」；azure-officially 不受限但倍率更高。",
+          default: true,
+        },
+        {
+          key: "codex_group_auto",
+          label: "Codex 按可用性自动挑分组",
+          description: "开启时忽略固定顺序，按插件的健康度、价格和速度设置自动选路；受限分组仍受「允许使用受限分组」约束。关闭且启用固定主备时：codex → codex-sale → azure-officially。修改后重启 Magpie 生效。",
+          default: false,
+        },
+        {
           key: "prefer_speed",
           label: "速度优先",
           description: "关：最便宜优先。开：先比 24 小时成功率和首字延迟，再看价格。",
@@ -134,10 +158,13 @@ export async function PackycodeAuthPlugin(input) {
       methods: [
         {
           type: "api",
-          // an "api" method's key field is titled by its label, so this is
-          // where the system access token goes
           label: "PackyAPI 系统访问令牌（推荐）",
           placeholder: "个人设置 → 安全设置 → 生成系统访问令牌",
+          // magpie 0.1.3659 起（host.js keyAsked）把「有 prompts 又有
+          // authorize」的 api 方法当成「令牌就在问题里」：它不再给 key
+          // 输入框，而是把 key="" 传进来、要 authorize 交回令牌。所以令牌
+          // 也作为一个问题来问（password，填的时候看不见），authorize 再把
+          // 它作为这次登录的 key 返回。
           prompts: [
             {
               type: "text",
@@ -147,15 +174,23 @@ export async function PackycodeAuthPlugin(input) {
               validate: (v) => (/^\d{2,20}$/.test(String(v ?? "").trim().replace(/^oidc_/, "")) ? undefined : "用户 ID 是数字"),
             },
             { type: "select", key: "endpoint", message: "接口线路", options: ENDPOINTS },
+            {
+              type: "password",
+              key: "token",
+              message: "系统访问令牌（个人设置 → 安全设置 → 生成系统访问令牌）",
+              placeholder: "粘贴整串令牌",
+              validate: (v) => (String(v ?? "").trim() ? undefined : "填入系统访问令牌"),
+            },
           ],
-          // the token itself arrives as the key, after the questions, so it
-          // is checked on the first listing rather than here
           async authorize(inputs) {
             const userID = String(inputs.userID ?? "").trim().replace(/^oidc_/, "")
+            const token = String(inputs.token ?? "").trim()
+            if (!token) return { type: "failed", error: "填入 PackyAPI 系统访问令牌" }
             // the token itself is the sign-in's key (auth.key); metadata
             // keeps only what is not secret, so it is not stored twice
             return {
               type: "success",
+              key: token,
               metadata: {
                 mode: "token",
                 userID,
@@ -169,9 +204,20 @@ export async function PackycodeAuthPlugin(input) {
           type: "api",
           label: "PackyAPI API Key（一个或多个）",
           placeholder: "sk-… 多个用空格或逗号分隔",
-          prompts: [{ type: "select", key: "endpoint", message: "接口线路", options: ENDPOINTS }],
+          prompts: [
+            { type: "select", key: "endpoint", message: "接口线路", options: ENDPOINTS },
+            {
+              type: "password",
+              key: "keys",
+              message: "PackyAPI API Key（一个或多个，空格或逗号分隔）",
+              placeholder: "sk-… sk-…",
+              validate: (v) => (String(v ?? "").trim() ? undefined : "填入 PackyAPI API Key"),
+            },
+          ],
           async authorize(inputs) {
-            return { type: "success", metadata: { mode: "keys", endpoint: inputs.endpoint || "slb" } }
+            const keys = String(inputs.keys ?? "").trim()
+            if (!keys) return { type: "failed", error: "填入 PackyAPI API Key" }
+            return { type: "success", key: keys, metadata: { mode: "keys", endpoint: inputs.endpoint || "slb" } }
           },
         },
       ],
@@ -264,6 +310,7 @@ async function fetchOn(input, world, url, init) {
     headers.delete("x-api-key")
     headers.delete("x-goog-api-key")
     headers.set("authorization", `Bearer ${cand.key.key}`)
+    log(input, "info", `PackyAPI: routing ${model} via ${cand.group || cand.key.name}`)
     return fetch(url, { method: init?.method ?? "POST", headers, body, signal: init?.signal })
   }
   const label = (cand) => cand.group || cand.key.name || "a group"

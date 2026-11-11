@@ -66,8 +66,9 @@ test("only PackyAPI's hosts are ever contacted", () => {
   }
   // anything else falls back to the default host rather than being fetched
   assert.equal(inferBase("elsewhere.example"), "https://slb-v1.api.fan")
-  assert.equal(consoleBase("cf"), "https://slb-v1.api.fan")
-  assert.equal(consoleBase("nonsense"), "https://slb-v1.api.fan")
+  // the console is the main site whatever relay line is chosen
+  assert.equal(consoleBase("cf"), "https://www.packyapi.com")
+  assert.equal(consoleBase("nonsense"), "https://www.packyapi.com")
 })
 
 test("nothing in the package looks like a real credential or a personal path", () => {
