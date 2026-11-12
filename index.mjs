@@ -118,6 +118,12 @@ export async function PackycodeAuthPlugin(input) {
           default: false,
         },
         {
+          key: "fixed_group_order",
+          label: "固定主备（关闭则自动选路）",
+          description: "开启：Claude 按 cc-sale → cc-expensive；Codex 按 codex → codex-sale → azure-officially，失败时继续兜底。关闭：按健康度、价格和速度设置自动选路。实际失败冷却和受限分组开关始终有效。在界面保存后，下一次请求生效，无需重启。",
+          default: true,
+        },
+        {
           key: "prefer_speed",
           label: "速度优先",
           description: "关：最便宜优先。开：先比 24 小时成功率和首字延迟，再看价格。",
@@ -286,6 +292,7 @@ async function fetchOn(input, world, url, init) {
     headers.delete("x-api-key")
     headers.delete("x-goog-api-key")
     headers.set("authorization", `Bearer ${cand.key.key}`)
+    log(input, "info", `PackyAPI: routing ${model} via ${cand.group || cand.key.name}`)
     return fetch(url, { method: init?.method ?? "POST", headers, body, signal: init?.signal })
   }
   const label = (cand) => cand.group || cand.key.name || "a group"

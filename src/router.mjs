@@ -14,6 +14,28 @@
 //      group, then the healthier and faster one.
 
 import { multiplierOf, priceOf } from "./pricing.mjs"
+
+// One switch selects fixed fallback order or ordinary automatic routing.
+// A saved new switch overrides legacy options; old installations keep their
+// previous routing until the new switch is first saved.
+export function preferredGroup(opts = {}, model = "") {
+  if (!/^(claude|codex|gpt-6)/i.test(model)) return { group: "", then: [] }
+  const codex = /^(codex|gpt-6)/i.test(model)
+  if (typeof opts.fixed_group_order === "boolean") {
+    if (!opts.fixed_group_order) return { group: "", then: [] }
+    return codex
+      ? { group: "codex", then: ["codex-sale", "azure-officially"] }
+      : { group: "cc-sale", then: ["cc-expensive"] }
+  }
+  if (codex) {
+    if (opts.codex_group_order === false || opts.codex_group_auto) return { group: "", then: [] }
+    return { group: "codex", then: ["codex-sale", "azure-officially"] }
+  }
+  if (opts.claude_group_order === false) return { group: "", then: [] }
+  return opts.claude_sale_first === false
+    ? { group: "cc-expensive", then: ["cc-sale"] }
+    : { group: "cc-sale", then: ["cc-expensive"] }
+}
 import { RESTRICTED } from "./groups.mjs"
 
 /** below this 24-hour success rate a group is skipped while another is left. */
@@ -32,6 +54,9 @@ export const MIN_SUCCESS = 88
 export function orderFor({ model, keys, pricing, perf, down, opts = {}, now = Date.now() }) {
   const info = pricing?.models?.get(model)
   const wanted = new Set(info?.groups ?? [])
+  // Claude and Codex order are controlled by the provider editor's switches.
+  const prefer = /^(claude|codex|gpt-6)/i.test(model) ? preferredGroup(opts, model) : { group: "", then: [] }
+  const preferredOrder = [...new Set([prefer.group, ...prefer.then].filter(Boolean))]
   const out = []
 
   for (const k of keys ?? []) {
@@ -40,9 +65,9 @@ export function orderFor({ model, keys, pricing, perf, down, opts = {}, now = Da
     const serving = k.groups.filter((g) => !info || wanted.has(g))
     if (!serving.length) continue
 
-    // A key whose groups include a restricted pool cannot be pinned away
-    // from it: the relay picks the channel among all of them.
-    const restricted = serving.filter((g) => RESTRICTED[g])
+    // Group preferences never override the provider's restricted-pool switch.
+    // Check all groups on the token: the relay can select any bound pool.
+    const restricted = k.groups.filter((g) => RESTRICTED[g])
     if (restricted.length && !opts.include_restricted) {
       out.push({ key: k, serving, group: null, multiplier: Infinity, price: null, multi: serving.length > 1, success: null, skip: "restricted", why: RESTRICTED[restricted[0]] })
       continue
@@ -87,24 +112,38 @@ export function orderFor({ model, keys, pricing, perf, down, opts = {}, now = Da
   // every candidate restricted: the answer says why rather than pretend
   if (!usable.length) return out
 
-  // a group known to be failing is left out while anything else is left
-  let pool = usable
-  if (opts.check_performance !== false) {
-    const healthy = pool.filter((c) => c.success == null || c.success >= MIN_SUCCESS)
-    if (healthy.length) pool = healthy
+  // Explicit preferences use single-group keys only: multi-group
+  // tokens cannot guarantee which pool actually answers or what it charges.
+  const rank = (c) => {
+    if (c.key.groups.length !== 1) return preferredOrder.length
+    const i = preferredOrder.indexOf(c.key.groups[0])
+    return i < 0 ? preferredOrder.length : i
   }
-  const open = pool.filter((c) => !c.cooling)
-  if (open.length) pool = open
-
+  const healthy = (c) => opts.check_performance === false || c.success == null || c.success >= MIN_SUCCESS
   const byPrice = (a, b) => {
+    const ra = rank(a)
+    const rb = rank(b)
+    if (ra !== rb) return ra - rb
     if (a.multiplier !== b.multiplier) return a.multiplier - b.multiplier
     if (a.multi !== b.multi) return a.multi ? 1 : -1 // a pinned price first
     return health(b) - health(a)
   }
   const bySpeed = (a, b) => health(b) - health(a) || (a.ttft ?? 1e9) - (b.ttft ?? 1e9) || byPrice(a, b)
 
+  if (preferredOrder.length) {
+    // A real failure's cooldown wins; historical success rates do not
+    // silently override the user's explicit first and second choices.
+    return usable.sort((a, b) =>
+      Number(a.cooling) - Number(b.cooling) || rank(a) - rank(b) ||
+      Number(!healthy(a)) - Number(!healthy(b)) || byPrice(a, b))
+  }
+  // Preserve the plugin's ordinary routing for every other model.
+  let pool = usable
+  const good = pool.filter(healthy)
+  if (good.length) pool = good
+  const open = pool.filter((c) => !c.cooling)
+  if (open.length) pool = open
   pool.sort(opts.prefer_speed ? bySpeed : byPrice)
-  // what was left out follows, worst first, so a caller may still ask it
   const rest = usable.filter((c) => !pool.includes(c)).sort(byPrice)
   return [...pool, ...rest]
 }

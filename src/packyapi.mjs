@@ -2,9 +2,9 @@
 // and the numeric user id in New-Api-User) and the relay under /v1 (needs an
 // API key, which is a token bound to one or more groups).
 //
-// cf.api.fan serves only /v1; slb-v1.api.fan and www.packyapi.com serve
-// both. www.packyapi.ai answers /api with a Cloudflare block, so it is not
-// a console host here.
+// cf.api.fan serves only /v1. slb-v1.api.fan serves /v1 but its /api now
+// answers 200 with an empty body, so the console is asked of the main site
+// first and the relay host only as a fallback.
 
 import { json } from "./http.mjs"
 
@@ -24,10 +24,24 @@ export function inferBase(endpoint) {
   return HOSTS[endpoint] ?? HOSTS.slb
 }
 
-/** where the console API is: the same host, but cf has no console. */
-export function consoleBase(endpoint) {
-  const e = endpoint === "cf" ? "slb" : endpoint
-  return HOSTS[e] ?? HOSTS.slb
+/** where the console API is: the main site, whatever relay line is used. */
+export function consoleBase() {
+  return HOSTS.www
+}
+
+/** console hosts to try, best first: the relay hosts no longer answer /api. */
+const CONSOLES = [HOSTS.www, HOSTS.slb]
+
+async function consoleJSON(path, opts = {}) {
+  let last
+  for (const host of CONSOLES) {
+    try {
+      return await json(host + path, opts)
+    } catch (e) {
+      last = e
+    }
+  }
+  throw last
 }
 
 const ua = "magpie-packycode/0.1 (+magpie plugin)"
@@ -64,7 +78,7 @@ export class PackyAPI {
 
   #api(path, opts = {}) {
     if (!this.signedIn) throw new Error("PackyAPI: no system access token")
-    return json(this.console + path, {
+    return consoleJSON(path, {
       ...opts,
       headers: consoleHeaders(this.accessToken, this.userID),
       fetchImpl: this.fetch,
@@ -74,17 +88,17 @@ export class PackyAPI {
   // ── public: no sign-in ────────────────────────────────────────────────
 
   status() {
-    return json(`${this.console}/api/status`, { fetchImpl: this.fetch, timeout: 15000 })
+    return consoleJSON(`/api/status`, { fetchImpl: this.fetch, timeout: 15000 })
   }
 
   pricing() {
-    return json(`${this.console}/api/pricing`, { fetchImpl: this.fetch, timeout: 20000 })
+    return consoleJSON(`/api/pricing`, { fetchImpl: this.fetch, timeout: 20000 })
   }
 
   /** one model's live numbers per group: success rate, TTFT, latency, TPS. */
   perf(model, hours = 24) {
     const q = new URLSearchParams({ model: String(model), hours: String(hours) })
-    return json(`${this.console}/api/perf-metrics?${q}`, { fetchImpl: this.fetch, timeout: 15000 })
+    return consoleJSON(`/api/perf-metrics?${q}`, { fetchImpl: this.fetch, timeout: 15000 })
   }
 
   // ── the account ───────────────────────────────────────────────────────
